@@ -10,56 +10,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-      
+          python-version: "3.12"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install flet flet-cli
           pip install -r requirements.txt 2>/dev/null || true
-      
+
       - name: Ensure mobile DB exists
-        run: |
-          python mobile_init_db.py
+        run: python mobile_init_db.py
         continue-on-error: true
-      
+
       - name: Configure API Key from GitHub Secrets
         env:
           DOUBAO_API_KEY: ${{ secrets.DOUBAO_API_KEY }}
           DOUBAO_MODEL_ID: ${{ secrets.DOUBAO_MODEL_ID }}
         run: |
-          # 从 GitHub Secrets 生成 .env 文件（不会出现在源码中）
-          if [ -n "$DOUBAO_API_KEY" ]; then
-            echo "DOUBAO_API_KEY=$DOUBAO_API_KEY" >> .env
-            echo "✅ API Key 已从 Secrets 注入"
-          else
-            echo "⚠️ 未配置 DOUBAO_API_KEY Secret，请先在仓库 Settings > Secrets 中添加"
-            echo "DOUBAO_API_KEY=YOUR_API_KEY_HERE" >> .env
-          fi
-          
-          if [ -n "$DOUBAO_MODEL_ID" ]; then
-            echo "DOUBAO_MODEL_ID=$DOUBAO_MODEL_ID" >> .env
-          fi
-          
-          # 其他默认值
+          echo "DOUBAO_API_KEY=$DOUBAO_API_KEY" >> .env
+          echo "DOUBAO_MODEL_ID=$DOUBAO_MODEL_ID" >> .env
           echo "DOUBAO_CHAT_ENDPOINT=https://ark.cn-beijing.volces.com/api/v3/chat/completions" >> .env
           echo "DOUBAO_EMBED_ENDPOINT=https://ark.cn-beijing.volces.com/api/v3/embeddings" >> .env
-          echo "DOUBAO_MODEL_NAME=doubao-seed-2-1-pro-260915" >> .env
-          
-          # 验证长度但不泄露
-          KEY_LEN=$(echo -n "$DOUBAO_API_KEY" | wc -c)
-          echo "Key 长度已验证: $KEY_LEN 字符"
-      
-      - name: Accept Android licenses
-        run: |
-          yes | flutter doctor --android-licenses 2>/dev/null || true
-        continue-on-error: true
-        env:
-          FLUTTER_ALLOW_ROOT: "true"
+          echo "✅ API Key injected from Secrets"
 
       - name: Build APK
         run: |
@@ -67,7 +43,6 @@ jobs:
           echo y | flet build apk \
             --module-name mobile_app \
             --output build/material-ai-diagnosis.apk \
-            --android-permission android.permission.INTERNET \
             --org com.materialai.diagnosis \
             --project material-ai-diagnosis \
             --product "材料AI诊断" \
@@ -75,10 +50,10 @@ jobs:
             --build-number ${{ github.run_number }}
         env:
           FLUTTER_ALLOW_ROOT: "true"
-      
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: material-ai-diagnosis-apk
+          name: material-ai-apk
           path: build/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error
