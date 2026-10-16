@@ -54,10 +54,18 @@ jobs:
           KEY_LEN=$(echo -n "$DOUBAO_API_KEY" | wc -c)
           echo "Key 长度已验证: $KEY_LEN 字符"
       
+      - name: Accept Android licenses
+        run: |
+          yes | flutter doctor --android-licenses 2>/dev/null || true
+        continue-on-error: true
+        env:
+          FLUTTER_ALLOW_ROOT: "true"
+
       - name: Build APK
         run: |
           mkdir -p build
           echo y | flet build apk \
+            --module-name mobile_app \
             --output build/material-ai-diagnosis.apk \
             --android-permission android.permission.INTERNET \
             --org com.materialai.diagnosis \
