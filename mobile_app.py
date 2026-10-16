@@ -244,7 +244,6 @@ def main(page: ft.Page):
         label="描述工艺偏差现象",
         hint_text="例：XX材料小试OK，放大后性能下降...",
         multiline=True, min_lines=3, max_lines=6,
-        border_radius=12,
         filled=True,
     )
     
@@ -273,8 +272,9 @@ def main(page: ft.Page):
                 diagnosis_result = run_diagnosis(problem_input.value.strip(), progress_cb)
                 # 回到主线程更新UI
                 page.run_thread(lambda: show_result(diagnosis_result))
-            except Exception as e:
-                page.run_thread(lambda: setattr(progress_text, 'value', f"❌ 错误: {str(e)}"))
+            except Exception as exc:
+                err_msg = str(exc)
+                page.run_thread(lambda msg=err_msg: setattr(progress_text, 'value', f"❌ 错误: {msg}"))
             finally:
                 page.run_thread(lambda: setattr(progress_ring, 'visible', False))
         
