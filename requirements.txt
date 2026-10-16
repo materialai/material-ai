@@ -1,6 +1,2 @@
-psycopg2-binary>=2.9 ; python_version < "3.14"
-pgvector>=0.2 ; python_version < "3.14"
 python-dotenv>=1.0
 requests>=2.31
-flet>=1.0
-flet-cli>=1.0
