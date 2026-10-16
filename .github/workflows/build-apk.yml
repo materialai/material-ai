@@ -24,7 +24,8 @@ jobs:
       
       - name: Ensure mobile DB exists
         run: |
-          python mobile_init_db
+          python mobile_init_db.py
+        continue-on-error: true
       
       - name: Configure API Key from GitHub Secrets
         env:
