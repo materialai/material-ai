@@ -57,7 +57,7 @@ jobs:
       - name: Build APK
         run: |
           mkdir -p build
-          flet build apk \
+          echo y | flet build apk \
             --output build/material-ai-diagnosis.apk \
             --android-permission android.permission.INTERNET \
             --org com.materialai.diagnosis \
@@ -65,6 +65,8 @@ jobs:
             --product "材料AI诊断" \
             --description "新材料工艺偏差排查AI + 审计系统" \
             --build-number ${{ github.run_number }}
+        env:
+          FLUTTER_ALLOW_ROOT: "true"
       
       - name: Upload APK
         uses: actions/upload-artifact@v4
