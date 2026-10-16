@@ -57,6 +57,22 @@ def init_mobile_db():
     return db_path
 
 
+def load_saved_api_settings():
+    """从SQLite加载已保存的API配置到config"""
+    try:
+        import db_sqlite as _db
+        import config as _cfg
+        _db.DB_PATH = get_db_path()
+        saved_key = _db.load_setting("DOUBAO_API_KEY", "")
+        saved_mid = _db.load_setting("DOUBAO_MODEL_ID", "")
+        if saved_key:
+            _cfg.DOUBAO_API_KEY = saved_key
+        if saved_mid:
+            _cfg.DOUBAO_MODEL_ID = saved_mid
+    except Exception:
+        pass
+
+
 # ============================================================
 # 业务逻辑 — 调用现有引擎
 # ============================================================
@@ -422,13 +438,53 @@ def main(page: ft.Page):
         ], spacing=12)
     
     def build_settings_page():
+        global doubao_api_ref, model_id_ref
+        api_save_status = ft.Text("", size=14, color=ft.Colors.GREEN)
+        
+        def save_api(e):
+            key = doubao_api_ref.value.strip()
+            mid = model_id_ref.value.strip()
+            if not key or not mid:
+                api_save_status.value = "❌ 两项都不能为空"
+                api_save_status.color = ft.Colors.RED
+                page.update()
+                return
+            import db_sqlite as _db
+            _db.save_setting("DOUBAO_API_KEY", key)
+            _db.save_setting("DOUBAO_MODEL_ID", mid)
+            import config as _cfg
+            _cfg.DOUBAO_API_KEY = key
+            _cfg.DOUBAO_MODEL_ID = mid
+            api_save_status.value = "✅ 已保存到本地，立即生效"
+            api_save_status.color = ft.Colors.GREEN
+            page.update()
+
+        import db_sqlite as _db
+        saved_key = _db.load_setting("DOUBAO_API_KEY", "")
+        saved_mid = _db.load_setting("DOUBAO_MODEL_ID", "")
+
+        doubao_api_ref = ft.TextField(
+            label="豆包 API Key",
+            value=saved_key,
+            password=True,
+            hint_text="从火山引擎方舟平台获取",
+        )
+        model_id_ref = ft.TextField(
+            label="豆包 Model ID (推理接入点)",
+            value=saved_mid,
+            hint_text="形如 ep-202xxxxxxxx-xxxxx",
+        )
+
         return ft.Column([
             ft.Text("⚙️ 设置", size=20, weight=ft.FontWeight.BOLD),
             ft.Card(ft.Container(
                 content=ft.Column([
-                    ft.Text("模型配置", size=16, weight=ft.FontWeight.W_600),
-                    ft.Text(f"模型: doubao-seed-2-1-pro", size=14),
-                    ft.Text(f"知识库: {get_db_path()}", size=12, color=ft.Colors.GREY),
+                    ft.Text("豆包 API 配置", size=16, weight=ft.FontWeight.W_600),
+                    doubao_api_ref,
+                    model_id_ref,
+                    ft.Button("保存配置", icon=ft.Icons.SAVE, on_click=save_api),
+                    api_save_status,
+                    ft.Text("信息本地保存，重启后依然有效", size=11, color=ft.Colors.GREY),
                 ], spacing=8),
                 padding=16
             )),
@@ -436,6 +492,15 @@ def main(page: ft.Page):
                 content=ft.Column([
                     ft.Text("知识库状态", size=16, weight=ft.FontWeight.W_600),
                     ft.Text("PCM规则+案例+全品类知识 已加载", size=14),
+                    ft.Text(f"数据库: {get_db_path()}", size=11, color=ft.Colors.GREY),
+                ], spacing=8),
+                padding=16
+            )),
+            ft.Card(ft.Container(
+                content=ft.Column([
+                    ft.Text("关于", size=16, weight=ft.FontWeight.W_600),
+                    ft.Text("新材料工艺偏差排查AI v1.0", size=14),
+                    ft.Text("兼容 Android / 鸿蒙 (HarmonyOS)", size=11, color=ft.Colors.GREY),
                 ], spacing=8),
                 padding=16
             )),
@@ -455,6 +520,57 @@ def main(page: ft.Page):
 # Flet 入口
 # ============================================================
 if __name__ == "__main__":
-    # 初始化移动端数据库
     init_mobile_db()
-    ft.run(main)
+    load_saved_api_settings()
+    
+    import config as cfg
+    has_key = bool(getattr(cfg, "DOUBAO_API_KEY", ""))
+    has_mid = bool(getattr(cfg, "DOUBAO_MODEL_ID", ""))
+    
+    if has_key and has_mid:
+        ft.run(main)
+    else:
+        def start_main(page: ft.Page):
+            page.title = "豆包登录"
+            page.theme_mode = ft.ThemeMode.LIGHT
+            page.window.width = 400
+            page.window.height = 500
+            page.vertical_alignment = ft.MainAxisAlignment.CENTER
+            
+            api_input = ft.TextField(label="豆包 API Key", password=True, width=350)
+            mid_input = ft.TextField(label="Model ID (推理接入点)", width=350)
+            status = ft.Text("", size=13, color=ft.Colors.RED)
+            
+            def do_login(e):
+                key = api_input.value.strip()
+                mid = mid_input.value.strip()
+                if not key or not mid:
+                    status.value = "❌ 请填写两项后点登录"
+                    status.color = ft.Colors.RED
+                    page.update()
+                    return
+                import db_sqlite as _db
+                _db.DB_PATH = get_db_path()
+                _db.save_setting("DOUBAO_API_KEY", key)
+                _db.save_setting("DOUBAO_MODEL_ID", mid)
+                cfg.DOUBAO_API_KEY = key
+                cfg.DOUBAO_MODEL_ID = mid
+                page.window.close()
+                ft.run(main)
+
+            page.add(
+                ft.Column([
+                    ft.Text("🔑 豆包AI 登录", size=22, weight=ft.FontWeight.BOLD),
+                    ft.Text("首次使用需要输入API凭证", size=13, color=ft.Colors.GREY),
+                    ft.Container(height=16),
+                    api_input,
+                    mid_input,
+                    ft.Container(height=8),
+                    ft.Button("登录", width=350, on_click=do_login),
+                    status,
+                    ft.Container(height=16),
+                    ft.Text("凭证保存在手机本地，只需输入一次", size=11, color=ft.Colors.GREY),
+                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            )
+        
+        ft.app(start_main)

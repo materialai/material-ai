@@ -50,6 +50,11 @@ def init_db():
             embedding BLOB
         );
         CREATE INDEX IF NOT EXISTS idx_kt_type ON knowledge_text(source_type);
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
     """)
     conn.commit()
     return conn
@@ -162,3 +167,27 @@ def get_stats():
         "solutions": conn.execute("SELECT COUNT(*) FROM improve_solution").fetchone()[0],
         "vectors": conn.execute("SELECT COUNT(*) FROM knowledge_text").fetchone()[0],
     }
+
+
+def save_setting(key, value):
+    """保存一项配置到SQLite"""
+    conn = get_conn()
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
+        (key, value)
+    )
+    conn.commit()
+
+
+def load_setting(key, default=""):
+    """读取一项配置"""
+    conn = get_conn()
+    row = conn.execute("SELECT value FROM app_settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def load_all_settings():
+    """读取全部配置"""
+    conn = get_conn()
+    rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
+    return {r["key"]: r["value"] for r in rows}
