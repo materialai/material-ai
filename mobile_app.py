@@ -317,9 +317,9 @@ def main(page: ft.Page):
         # 跳转按钮
         result_container.controls.append(
             ft.Row([
-                ft.ElevatedButton("查看改善方案", icon=ft.Icons.ARTICLE,
+                ft.Button("查看改善方案", icon=ft.Icons.ARTICLE,
                     on_click=lambda _: nav_bar.selected_index == 1 and on_nav_change(1)),
-                ft.ElevatedButton("查看审计报告", icon=ft.Icons.SHIELD,
+                ft.Button("查看审计报告", icon=ft.Icons.SHIELD,
                     on_click=lambda _: (setattr(nav_bar, 'selected_index', 2), on_nav_change(2))),
             ], alignment=ft.MainAxisAlignment.CENTER)
         )
@@ -340,7 +340,7 @@ def main(page: ft.Page):
         quick_btns = []
         for label, text in quick_cases:
             quick_btns.append(
-                ft.ElevatedButton(label, 
+                ft.Button(label, 
                     on_click=lambda e, t=text: set_and_fill(t),
                     height=40, style=ft.ButtonStyle(text_style=ft.TextStyle(size=12)))
             )
@@ -355,13 +355,13 @@ def main(page: ft.Page):
             problem_input,
             ft.Text("💡 快速案例", size=16, weight=ft.FontWeight.W_600),
             ft.Row(quick_btns, wrap=True, spacing=8),
-            ft.ElevatedButton("🚀 开始AI排查", icon=ft.Icons.PLAY_ARROW,
+            ft.Button("🚀 开始AI排查", icon=ft.Icons.PLAY_ARROW,
                 on_click=on_run_diagnosis,
                 style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
-                    padding=ft.padding.symmetric(horizontal=32, vertical=16),
+                    padding=ft.Padding.symmetric(horizontal=32, vertical=16),
                     shape=ft.RoundedRectangleBorder(radius=20)),
                 height=50),
-            ft.Container(content=ft.Row([progress_ring, progress_text], alignment=ft.MainAxisAlignment.CENTER), padding=ft.padding.symmetric(vertical=8)),
+            ft.Container(content=ft.Row([progress_ring, progress_text], alignment=ft.MainAxisAlignment.CENTER), padding=ft.Padding.symmetric(vertical=8)),
             result_container,
         ], spacing=16)
     
@@ -443,7 +443,7 @@ def main(page: ft.Page):
     
     # ====== 页面组装 ======
     page.add(
-        ft.Container(content=content_area, expand=True, padding=ft.padding.only(bottom=16))
+        ft.Container(content=content_area, expand=True, padding=ft.Padding.symmetric(horizontal=0, vertical=8))
     )
     page.add(nav_bar)
     

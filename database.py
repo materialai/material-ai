@@ -1,13 +1,21 @@
-"""PostgreSQL数据库连接与操作封装"""
+"""PostgreSQL数据库连接与操作封装（可选依赖：未安装psycopg2时不影响模块加载）"""
 
 import json
 import logging
 from contextlib import contextmanager
 from typing import Optional
 
-import psycopg2
-from psycopg2.extras import RealDictCursor, Json
-from pgvector.psycopg2 import register_vector
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor, Json
+    from pgvector.psycopg2 import register_vector
+    HAS_PG = True
+except ImportError:
+    HAS_PG = False
+    psycopg2 = None
+    RealDictCursor = None
+    Json = lambda x, **kw: x
+    register_vector = lambda *a, **k: None
 
 import config
 
@@ -16,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 def get_connection():
     """获取连接（自动注册pgvector类型）"""
+    if not HAS_PG:
+        raise RuntimeError("PostgreSQL支持未安装：请 pip install psycopg2-binary pgvector")
     conn = psycopg2.connect(
         host=config.PG_HOST,
         port=config.PG_PORT,
