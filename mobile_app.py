@@ -438,18 +438,31 @@ def main(page: ft.Page):
         ], spacing=12)
     
     def build_settings_page():
-        global doubao_api_ref, model_id_ref
+        import db_sqlite as _db
+        saved_key = _db.load_setting("DOUBAO_API_KEY", "")
+        saved_mid = _db.load_setting("DOUBAO_MODEL_ID", "")
+
+        api_key_field = ft.TextField(
+            label="豆包 API Key",
+            value=saved_key,
+            password=True,
+            hint_text="从火山引擎方舟平台获取",
+        )
+        model_id_field = ft.TextField(
+            label="豆包 Model ID (推理接入点)",
+            value=saved_mid,
+            hint_text="形如 ep-202xxxxxxxx-xxxxx",
+        )
         api_save_status = ft.Text("", size=14, color=ft.Colors.GREEN)
-        
+
         def save_api(e):
-            key = doubao_api_ref.value.strip()
-            mid = model_id_ref.value.strip()
+            key = api_key_field.value.strip()
+            mid = model_id_field.value.strip()
             if not key or not mid:
                 api_save_status.value = "❌ 两项都不能为空"
                 api_save_status.color = ft.Colors.RED
                 page.update()
                 return
-            import db_sqlite as _db
             _db.save_setting("DOUBAO_API_KEY", key)
             _db.save_setting("DOUBAO_MODEL_ID", mid)
             import config as _cfg
@@ -459,29 +472,13 @@ def main(page: ft.Page):
             api_save_status.color = ft.Colors.GREEN
             page.update()
 
-        import db_sqlite as _db
-        saved_key = _db.load_setting("DOUBAO_API_KEY", "")
-        saved_mid = _db.load_setting("DOUBAO_MODEL_ID", "")
-
-        doubao_api_ref = ft.TextField(
-            label="豆包 API Key",
-            value=saved_key,
-            password=True,
-            hint_text="从火山引擎方舟平台获取",
-        )
-        model_id_ref = ft.TextField(
-            label="豆包 Model ID (推理接入点)",
-            value=saved_mid,
-            hint_text="形如 ep-202xxxxxxxx-xxxxx",
-        )
-
         return ft.Column([
             ft.Text("⚙️ 设置", size=20, weight=ft.FontWeight.BOLD),
             ft.Card(ft.Container(
                 content=ft.Column([
                     ft.Text("豆包 API 配置", size=16, weight=ft.FontWeight.W_600),
-                    doubao_api_ref,
-                    model_id_ref,
+                    api_key_field,
+                    model_id_field,
                     ft.Button("保存配置", icon=ft.Icons.SAVE, on_click=save_api),
                     api_save_status,
                     ft.Text("信息本地保存，重启后依然有效", size=11, color=ft.Colors.GREY),
@@ -528,9 +525,9 @@ if __name__ == "__main__":
     has_mid = bool(getattr(cfg, "DOUBAO_MODEL_ID", ""))
     
     if has_key and has_mid:
-        ft.run(main)
+        ft.app(main)
     else:
-        def start_main(page: ft.Page):
+        def login_page(page: ft.Page):
             page.title = "豆包登录"
             page.theme_mode = ft.ThemeMode.LIGHT
             page.window.width = 400
@@ -556,7 +553,6 @@ if __name__ == "__main__":
                 cfg.DOUBAO_API_KEY = key
                 cfg.DOUBAO_MODEL_ID = mid
                 page.window.close()
-                ft.run(main)
 
             page.add(
                 ft.Column([
@@ -573,4 +569,4 @@ if __name__ == "__main__":
                 ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
             )
         
-        ft.app(start_main)
+        ft.app(login_page)
