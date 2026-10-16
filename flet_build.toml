@@ -1,0 +1,12 @@
+[project]
+name = "material-ai-diagnosis"
+version = "1.0.0"
+description = "新材料工艺偏差排查AI系统"
+entry_point = "mobile_app.py"
+
+[build.android]
+permissions = ["android.permission.INTERNET"]
+dependencies = ["flet"]
+
+[build]
+output_dir = "build"
