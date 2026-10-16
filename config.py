@@ -50,6 +50,11 @@ FEEDBACK_DAYS = [int(d) for d in os.getenv("IMPROVE_FEEDBACK_DAYS", "7,14").spli
 DOUBAO_RPS = int(os.getenv("DOUBAO_RPS_LIMIT", "5"))
 DOUBAO_TIMEOUT = int(os.getenv("DOUBAO_TIMEOUT", "60"))
 
+# ---------- 语音功能 ----------
+VOICE_ENABLED = os.getenv("VOICE_ENABLED", "true").lower() == "true"
+TTS_VOICE = os.getenv("TTS_VOICE", "BV406_V2_streaming")
+TTS_ENCODING = os.getenv("TTS_ENCODING", "mp3")
+
 # ---------- 提示词路径 ----------
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 PROMPT_FILES = {

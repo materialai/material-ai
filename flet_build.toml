@@ -5,7 +5,7 @@ description = "新材料工艺偏差排查AI系统"
 entry_point = "mobile_app.py"
 
 [build.android]
-permissions = ["android.permission.INTERNET"]
+permissions = ["android.permission.INTERNET", "android.permission.RECORD_AUDIO", "android.permission.WRITE_EXTERNAL_STORAGE"]
 dependencies = ["flet"]
 
 [build]

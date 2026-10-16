@@ -224,7 +224,27 @@ def main(page: ft.Page):
     page.scroll = ft.ScrollMode.AUTO
     page.padding = 16
     page.bgcolor = ft.Colors.GREY_50
-    
+
+    # 语音录音器 + 播放器 — Flet 0.7.0+ services 模式
+    try:
+        audio_recorder = ft.AudioRecorder(
+            audio_encoder=ft.AudioEncoder.OPUS,
+            on_state_changed=lambda e: print(f"Recorder: {e.data}"),
+        )
+        player = ft.Audio(autoplay=False)
+        try:
+            page.services.append(audio_recorder)
+            page.services.append(player)
+        except AttributeError:
+            try:
+                page.overlay.append(audio_recorder)
+                page.overlay.append(player)
+            except Exception:
+                pass
+    except (AttributeError, TypeError):
+        audio_recorder = None
+        player = None
+
     # 如果是窄屏，设置合适宽度
     if page.width < 600:
         page.window.width = page.width
@@ -235,6 +255,7 @@ def main(page: ft.Page):
             ft.NavigationBarDestination(icon=ft.Icons.SEARCH, label="排查"),
             ft.NavigationBarDestination(icon=ft.Icons.ANALYTICS, label="结果"),
             ft.NavigationBarDestination(icon=ft.Icons.SHIELD, label="审计"),
+            ft.NavigationBarDestination(icon=ft.Icons.BOOK, label="知识库"),
             ft.NavigationBarDestination(icon=ft.Icons.SETTINGS, label="设置"),
         ],
         on_change=lambda e: on_nav_change(e.control.selected_index)
@@ -252,6 +273,8 @@ def main(page: ft.Page):
         elif index == 2:
             content_area.controls.append(build_audit_page())
         elif index == 3:
+            content_area.controls.append(build_knowledge_page())
+        elif index == 4:
             content_area.controls.append(build_settings_page())
         page.update()
     
@@ -344,7 +367,63 @@ def main(page: ft.Page):
     
     def build_diagnosis_page():
         """输入 + 问题描述页"""
-        
+        voice_status = ft.Text("", size=13, color=ft.Colors.GREY_600)
+        is_recording = [False]
+
+        def toggle_recording(e):
+            if audio_recorder is None:
+                voice_status.value = "⚠️ 当前设备不支持录音"
+                page.update()
+                return
+            if is_recording[0]:
+                is_recording[0] = False
+                voice_status.value = "🔴 录音中..."
+                page.update()
+                try:
+                    # 新版 Flet: stop_recording 是 async
+                    try:
+                        import asyncio
+                        loop = asyncio.new_event_loop()
+                        try:
+                            rec_path = loop.run_until_complete(audio_recorder.stop_recording())
+                        finally:
+                            loop.close()
+                    except Exception:
+                        rec_path = audio_recorder.stop_recording()
+
+                    voice_status.value = "⏹ 录音结束，识别中..."
+                    page.update()
+                    import voice_api
+                    audio_bytes = open(rec_path, "rb").read()
+                    text = voice_api.recognize_speech(audio_bytes, fmt="opus", rate=16000)
+                    if text.strip():
+                        problem_input.value = text.strip()
+                        voice_status.value = f"✅ 已识别: {text[:30]}..."
+                    else:
+                        voice_status.value = "⚠️ 未识别到文字，请重试"
+                except Exception as ex:
+                    voice_status.value = f"❌ 识别失败: {str(ex)[:40]}"
+                page.update()
+            else:
+                # 开始录音
+                rec_path = os.path.join(os.path.dirname(__file__), "temp_rec.opus")
+                try:
+                    # 新版 Flet: start_recording 是 async
+                    try:
+                        import asyncio
+                        loop = asyncio.new_event_loop()
+                        try:
+                            loop.run_until_complete(audio_recorder.start_recording(rec_path))
+                        finally:
+                            loop.close()
+                    except Exception:
+                        audio_recorder.start_recording(rec_path)
+                    is_recording[0] = True
+                    voice_status.value = "🔴 正在录音..."
+                except Exception as ex:
+                    voice_status.value = f"❌ 录音启动失败: {str(ex)[:30]}"
+                page.update()
+
         # 快捷案例按钮
         quick_cases = [
             ("PCM放大包封率跌", "竹基碳/PEG复合PCM：500ml小试包封率85%；放大至50L釜包封率跌至58%"),
@@ -369,6 +448,11 @@ def main(page: ft.Page):
             ft.Text("🔬 工艺偏差排查", size=24, weight=ft.FontWeight.BOLD),
             ft.Text("描述您遇到的材料/工艺问题，AI将综合分析", size=14, color=ft.Colors.GREY_700),
             problem_input,
+            ft.Row([
+                ft.Button("🎤 语音输入", icon=ft.Icons.MIC, on_click=toggle_recording,
+                    style=ft.ButtonStyle(bgcolor=ft.Colors.RED_100, color=ft.Colors.RED)),
+                voice_status,
+            ], alignment=ft.MainAxisAlignment.START),
             ft.Text("💡 快速案例", size=16, weight=ft.FontWeight.W_600),
             ft.Row(quick_btns, wrap=True, spacing=8),
             ft.Button("🚀 开始AI排查", icon=ft.Icons.PLAY_ARROW,
@@ -382,14 +466,45 @@ def main(page: ft.Page):
         ], spacing=16)
     
     def build_results_page():
-        """结果页：方案卡"""
+        """结果页：方案卡 + 语音播报"""
         if not diagnosis_result:
             return ft.Column([
                 ft.Text("📋 改善方案", size=20, weight=ft.FontWeight.BOLD),
                 ft.Text("请先完成排查步骤", color=ft.Colors.GREY_500),
             ])
-        
+
         sol = diagnosis_result.get("solution", "")
+        speak_status = ft.Text("", size=13, color=ft.Colors.GREY_600)
+
+        def speak_solution(e):
+            if player is None:
+                speak_status.value = "⚠️ 当前设备不支持播放"
+                page.update()
+                return
+            speak_status.value = "🔊 正在合成语音..."
+            page.update()
+            try:
+                import voice_api
+                sol_text = sol[:200] if sol else "暂无方案"
+                audio_data = voice_api.text_to_speech(sol_text)
+                audio_path = voice_api.save_audio_tmp(audio_data, ".mp3")
+                if audio_path:
+                    player.src = audio_path
+                    player.play()
+                    speak_status.value = "🔊 播放中..."
+                else:
+                    speak_status.value = "❌ 播放失败"
+            except Exception as ex:
+                speak_status.value = f"❌ {str(ex)[:40]}"
+            page.update()
+
+        def stop_speak(e):
+            if player is None:
+                return
+            player.pause()
+            speak_status.value = "⏸ 已停止"
+            page.update()
+
         return ft.Column([
             ft.Text("📋 改善方案卡", size=20, weight=ft.FontWeight.BOLD),
             ft.Container(
@@ -397,8 +512,122 @@ def main(page: ft.Page):
                 padding=16, bgcolor=ft.Colors.WHITE,
                 border_radius=12, border=ft.border.all(1, ft.Colors.GREY_300)
             ),
+            ft.Row([
+                ft.Button("🔊 语音播报", icon=ft.Icons.VOLUME_UP, on_click=speak_solution,
+                    style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_100, color=ft.Colors.GREEN)),
+                ft.Button("⏹ 停止", icon=ft.Icons.STOP, on_click=stop_speak),
+                speak_status,
+            ], alignment=ft.MainAxisAlignment.START),
         ], spacing=12, scroll=ft.ScrollMode.AUTO)
     
+    def build_knowledge_page():
+        """知识库/案例录入页"""
+        import db_sqlite as kb_db
+        kb_db.DB_PATH = get_db_path()
+        stats = kb_db.get_stats()
+
+        # 案例录入
+        case_input = ft.TextField(label="问题描述", multiline=True, min_lines=2, max_lines=4)
+        cause_input = ft.TextField(label="根因分析", multiline=True, min_lines=2, max_lines=3)
+        solution_input = ft.TextField(label="改善方案", multiline=True, min_lines=2, max_lines=3)
+        case_status = ft.Text("", size=13, color=ft.Colors.GREEN)
+
+        def save_case(e):
+            prob = case_input.value.strip()
+            cause = cause_input.value.strip()
+            sol = solution_input.value.strip()
+            if not prob:
+                case_status.value = "❌ 问题描述不能为空"
+                case_status.color = ft.Colors.RED
+                page.update()
+                return
+            import uuid
+            case_id = f"case-{uuid.uuid4().hex[:8]}"
+            kb_db.insert_case(case_id, prob, cause)
+            if sol:
+                kb_db.insert_solution(f"sol-{uuid.uuid4().hex()[6:8]}", cause or prob[:20], sol)
+            # 把案例文本也索引到向量知识库
+            try:
+                kb_db.index_text("manual_case", case_id, f"问题:{prob}\n根因:{cause}\n方案:{sol}")
+            except Exception:
+                pass
+            case_status.value = "✅ 案例已保存，可用于后续排查"
+            case_status.color = ft.Colors.GREEN
+            case_input.value = ""
+            cause_input.value = ""
+            solution_input.value = ""
+            page.update()
+
+        # 经验规则录入
+        rule_trigger = ft.TextField(label="触发条件（关键词）")
+        rule_content = ft.TextField(label="经验内容", multiline=True, min_lines=2, max_lines=4)
+        rule_status = ft.Text("", size=13, color=ft.Colors.GREEN)
+
+        def save_rule(e):
+            trigger = rule_trigger.value.strip()
+            content = rule_content.value.strip()
+            if not trigger or not content:
+                rule_status.value = "❌ 两项都不能为空"
+                rule_status.color = ft.Colors.RED
+                page.update()
+                return
+            import uuid
+            rule_id = f"rule-{uuid.uuid4().hex()[6:8]}"
+            kb_db.insert_rule(rule_id, trigger, content, source="mobile")
+            try:
+                kb_db.index_text("experience_rule", rule_id, f"触发:{trigger}\n经验:{content}")
+            except Exception:
+                pass
+            rule_status.value = "✅ 经验规则已保存"
+            rule_status.color = ft.Colors.GREEN
+            rule_trigger.value = ""
+            rule_content.value = ""
+            page.update()
+
+        # Tab切换：案例录入 / 规则录入
+        tab_case = ft.Column([
+            ft.Text("录入新案例，沉淀经验供AI参考", size=14, color=ft.Colors.GREY_700),
+            case_input,
+            cause_input,
+            solution_input,
+            ft.Button("💾 保存案例", icon=ft.Icons.SAVE, on_click=save_case),
+            case_status,
+        ], spacing=10)
+
+        tab_rule = ft.Column([
+            ft.Text("录入经验规则，提升排查精度", size=14, color=ft.Colors.GREY_700),
+            rule_trigger,
+            rule_content,
+            ft.Button("💾 保存规则", icon=ft.Icons.SAVE, on_click=save_rule),
+            rule_status,
+        ], spacing=10)
+
+        page_tabs = ft.Tabs(
+            selected_index=0,
+            tabs=[
+                ft.Tab(text="📋 案例录入", content=tab_case),
+                ft.Tab(text="📐 规则录入", content=tab_rule),
+            ]
+        )
+
+        return ft.Column([
+            ft.Text("📚 知识库管理", size=20, weight=ft.FontWeight.BOLD),
+            ft.Card(ft.Container(
+                content=ft.Row([
+                    ft.Column([
+                        f"经验规则: {stats.get('rules', 0)}",
+                        f"向量索引: {stats.get('vectors', 0)}",
+                    ], spacing=4),
+                    ft.Column([
+                        f"案例数量: {stats.get('cases', 0)}",
+                        f"方案数量: {stats.get('solutions', 0)}",
+                    ], spacing=4),
+                ], alignment=ft.MainAxisAlignment.SPACE_AROUND),
+                padding=16
+            )),
+            ft.Container(content=page_tabs, padding=ft.Padding.symmetric(vertical=8)),
+        ], spacing=12)
+
     def build_audit_page():
         """审计报告页"""
         if not diagnosis_result or not diagnosis_result.get("audit_scores"):
