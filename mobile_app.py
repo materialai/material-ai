@@ -11,44 +11,43 @@ import flet as ft
 # 移动端 SQLite 路径：Flet打包后工作目录会变，需复制DB到可写路径
 # ============================================================
 def get_db_path():
-    """获取移动端可用的SQLite路径"""
-    if getattr(sys, 'frozen', False):
-        # PyInstaller / Flet packaged
-        base = os.path.dirname(sys.executable)
-    else:
-        base = os.path.dirname(__file__)
-    
+    """获取移动端可用的SQLite路径（Android/Mobile安全写入）"""
     db_name = "pcm_knowledge.db"
-    src = os.path.join(base, db_name)
-    
-    # Android: 复制到 app 私有目录
-    if sys.platform == "android" or "android" in sys.platform:
-        try:
-            from android.storage import app_private_dir
-            dst_dir = app_private_dir
-        except ImportError:
-            dst_dir = os.path.expanduser("~/.material_ai")
-        os.makedirs(dst_dir, exist_ok=True)
-        dst = os.path.join(dst_dir, db_name)
-        if not os.path.exists(dst) and os.path.exists(src):
-            import shutil
-            shutil.copy2(src, dst)
-        return dst
-    
-    return src
+
+    if sys.platform == "android":
+        # Android: use CWD which Flutter sets to /data/data/<pkg>/files/
+        cwd = os.getcwd()
+        if os.access(cwd, os.W_OK):
+            return os.path.join(cwd, db_name)
+        # Fallback: try /data/local/tmp (always writable)
+        tmp = "/data/local/tmp/material_ai"
+        os.makedirs(tmp, exist_ok=True)
+        return os.path.join(tmp, db_name)
+
+    # Desktop / development
+    base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, db_name)
 
 
 def init_mobile_db():
-    """确保移动端数据库已就绪"""
+    """确保移动端数据库已就绪，并同步DB路径给db_sqlite模块"""
     db_path = get_db_path()
+
+    # 同步给 db_sqlite 模块
+    try:
+        import db_sqlite as _db
+        _db.DB_PATH = db_path
+    except Exception:
+        pass
+
     if os.path.exists(db_path):
         return db_path
-    # 首次运行：用脚本初始化
+    # 首次运行：用脚本初始化（会创建表结构）
     try:
         import importlib.util
         spec = importlib.util.spec_from_file_location(
             "import_pcm_sqlite",
-            os.path.join(os.path.dirname(__file__), "import_pcm_sqlite.py")
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "import_pcm_sqlite.py")
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
