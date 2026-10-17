@@ -30,7 +30,7 @@ def get_db_path():
 
 
 def init_mobile_db():
-    """确保移动端数据库已就绪，并同步DB路径给db_sqlite模块"""
+    """确保移动端数据库已就绪"""
     db_path = get_db_path()
 
     # 同步给 db_sqlite 模块
@@ -42,15 +42,10 @@ def init_mobile_db():
 
     if os.path.exists(db_path):
         return db_path
-    # 首次运行：用脚本初始化（会创建表结构）
+    # 首次运行：直接创建表（不需要 import_pcm_sqlite 脚本）
     try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "import_pcm_sqlite",
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "import_pcm_sqlite.py")
-        )
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        import db_sqlite as _db
+        _db.init_db()
     except Exception as e:
         print(f"移动端DB初始化警告: {e}")
     return db_path
@@ -753,7 +748,7 @@ if __name__ == "__main__":
     has_mid = bool(getattr(cfg, "DOUBAO_MODEL_ID", ""))
     
     if has_key and has_mid:
-        ft.app(main)
+        ft.run(main)
     else:
         def login_page(page: ft.Page):
             page.title = "豆包登录"
@@ -797,4 +792,4 @@ if __name__ == "__main__":
                 ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
             )
         
-        ft.app(login_page)
+        ft.run(login_page)
