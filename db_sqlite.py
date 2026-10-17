@@ -5,8 +5,12 @@ import sqlite3
 import json
 import logging
 import numpy as np
-import pandas as pd
 from pathlib import Path
+
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
 
 from local_embedding import embed_text, cosine_similarity, VEC_DIM
 

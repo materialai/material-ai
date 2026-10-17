@@ -210,3 +210,47 @@ def vector_count() -> int:
         cur.execute("SELECT COUNT(*) as cnt FROM knowledge_vector")
         row = cur.fetchone()
         return row["cnt"] if row else 0
+
+
+# ============================
+# 移动端 fallback: 无PostgreSQL时透明代理到 db_sqlite
+# ============================
+if not HAS_PG:
+    import db_sqlite as _sqlite
+
+    def insert_experience_rule(rule_id, trigger_condition, exp_content, source_info="", rule_name="", **kw):
+        return _sqlite.insert_rule(rule_id, trigger_condition, exp_content, source=source_info)
+
+    def get_rule_by_id(rule_id):
+        rules = _sqlite.get_all_rules()
+        return next((r for r in rules if r.get("rule_id") == rule_id), None)
+
+    def search_rules_by_keyword(keyword):
+        return _sqlite.search_rules(keyword)
+
+    def insert_case(case_id, problem_desc, problem_original="", **kw):
+        return _sqlite.insert_case(case_id, problem_desc, root_cause=problem_original)
+
+    def update_case(case_id, **fields):
+        return _sqlite.update_case(case_id, **fields)
+
+    def get_case_by_id(case_id):
+        return _sqlite.get_case_by_id(case_id)
+
+    def insert_formula(formula_id, **kw):
+        return _sqlite.index_text("formula", formula_id, str(kw))
+
+    def insert_test_record(test_id, **kw):
+        return _sqlite.index_text("test_record", test_id, str(kw))
+
+    def insert_vector(source_type, source_id, content, embedding=None):
+        return _sqlite.index_text(source_type, source_id, content)
+
+    def search_vectors(query_embedding, top_k=None):
+        return []
+
+    def vector_count():
+        try:
+            return _sqlite.get_stats().get("vectors", 0)
+        except Exception:
+            return 0
