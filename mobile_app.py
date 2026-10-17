@@ -213,7 +213,7 @@ def run_diagnosis(problem_text: str, progress_cb=None) -> dict:
 # ============================================================
 # Flet 移动端 UI
 # ============================================================
-def main(page: ft.Page):
+def build_main_ui(page: ft.Page):
     page.title = "材料AI诊断"
     page.scroll = ft.ScrollMode.AUTO
     page.padding = 16
@@ -732,13 +732,10 @@ def main(page: ft.Page):
     )
     page.add(nav_bar)
     
-    # 默认显示排查页
-    on_nav_change(0)
+def main(page: ft.Page):
+    """Flet入口包装"""
+    build_main_ui(page)
 
-
-# ============================================================
-# Flet 入口
-# ============================================================
 if __name__ == "__main__":
     init_mobile_db()
     load_saved_api_settings()
@@ -775,7 +772,11 @@ if __name__ == "__main__":
                 _db.save_setting("DOUBAO_MODEL_ID", mid)
                 cfg.DOUBAO_API_KEY = key
                 cfg.DOUBAO_MODEL_ID = mid
-                page.window.close()
+                # 清除登录页并绘制主界面
+                page.controls.clear()
+                page.vertical_alignment = None
+                page.padding = 16
+                build_main_ui(page)
 
             page.add(
                 ft.Column([
