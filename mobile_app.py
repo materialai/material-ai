@@ -219,23 +219,27 @@ def build_main_ui(page: ft.Page):
     page.padding = 16
     page.bgcolor = ft.Colors.GREY_50
 
-    # 语音录音器 + 播放器 — Flet 0.7.0+ services 模式
+    # 语音录音器 + 播放器（Flet 1.0.x 兼容初始化）
+    audio_recorder = None
+    player = None
     try:
         audio_recorder = ft.AudioRecorder(
             audio_encoder=ft.AudioEncoder.OPUS,
             on_state_changed=lambda e: print(f"Recorder: {e.data}"),
         )
         player = ft.Audio(autoplay=False)
+        # 优先新版 services，回退旧版 overlay
         try:
             page.services.append(audio_recorder)
             page.services.append(player)
-        except AttributeError:
+        except (AttributeError, TypeError):
             try:
                 page.overlay.append(audio_recorder)
                 page.overlay.append(player)
             except Exception:
-                pass
-    except (AttributeError, TypeError):
+                audio_recorder = None
+                player = None
+    except (AttributeError, TypeError, NameError):
         audio_recorder = None
         player = None
 
@@ -442,11 +446,12 @@ def build_main_ui(page: ft.Page):
             ft.Text("🔬 工艺偏差排查", size=24, weight=ft.FontWeight.BOLD),
             ft.Text("描述您遇到的材料/工艺问题，AI将综合分析", size=14, color=ft.Colors.GREY_700),
             problem_input,
-            ft.Row([
+            *([ft.Row([
                 ft.Button("🎤 语音输入", icon=ft.Icons.MIC, on_click=toggle_recording,
                     style=ft.ButtonStyle(bgcolor=ft.Colors.RED_100, color=ft.Colors.RED)),
                 voice_status,
-            ], alignment=ft.MainAxisAlignment.START),
+            ], alignment=ft.MainAxisAlignment.START)] if audio_recorder is not None else
+               [ft.Text("ℹ️ 当前设备不支持语音输入，请使用文字描述", size=12, color=ft.Colors.GREY_500)]),
             ft.Text("💡 快速案例", size=16, weight=ft.FontWeight.W_600),
             ft.Row(quick_btns, wrap=True, spacing=8),
             ft.Button("🚀 开始AI排查", icon=ft.Icons.PLAY_ARROW,
@@ -596,12 +601,30 @@ def build_main_ui(page: ft.Page):
             rule_status,
         ], spacing=10)
 
+        # Flet 1.0.x 改用 TabBar + TabBarView; Tab 只接受 label
         page_tabs = ft.Tabs(
+            length=2,
             selected_index=0,
-            tabs=[
-                ft.Tab(text="📋 案例录入", content=tab_case),
-                ft.Tab(text="📐 规则录入", content=tab_rule),
-            ]
+            expand=True,
+            content=ft.Column(
+                expand=True,
+                controls=[
+                    ft.TabBar(
+                        expand=True,
+                        tabs=[
+                            ft.Tab(label="📋 案例录入"),
+                            ft.Tab(label="📐 规则录入"),
+                        ],
+                    ),
+                    ft.TabBarView(
+                        expand=True,
+                        controls=[
+                            ft.Container(content=tab_case, padding=10, expand=True),
+                            ft.Container(content=tab_rule, padding=10, expand=True),
+                        ],
+                    ),
+                ],
+            ),
         )
 
         return ft.Column([
@@ -770,8 +793,17 @@ if __name__ == "__main__":
                 _db.DB_PATH = get_db_path()
                 _db.save_setting("DOUBAO_API_KEY", key)
                 _db.save_setting("DOUBAO_MODEL_ID", mid)
+                import os as _os
+                _os.environ["DOUBAO_API_KEY"] = key
+                _os.environ["DOUBAO_MODEL_ID"] = mid
                 cfg.DOUBAO_API_KEY = key
                 cfg.DOUBAO_MODEL_ID = mid
+                # 重置模型单例，使其下次调用时读取新的环境变量
+                try:
+                    import model_manager as _mm
+                    _mm._instance = None
+                except Exception:
+                    pass
                 # 清除登录页并绘制主界面
                 page.controls.clear()
                 page.vertical_alignment = None

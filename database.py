@@ -249,6 +249,10 @@ if not HAS_PG:
     def search_vectors(query_embedding, top_k=None):
         return []
 
+    def retrieve(query_text, top_k=4):
+        """SQLite 向量召回（RAG检索入口）"""
+        return _sqlite.retrieve(query_text, top_k=top_k)
+
     def vector_count():
         try:
             return _sqlite.get_stats().get("vectors", 0)
