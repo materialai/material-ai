@@ -57,3 +57,12 @@ jobs:
           name: material-ai-apk
           path: build/*.apk
           if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: APK Build #${{ github.run_number }}
+          files: build/*.apk
+          make_latest: true
