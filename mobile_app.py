@@ -443,8 +443,8 @@ def build_main_ui(page: ft.Page):
     
 
     def _run_llm_diagnosis():
-        """后台线程：调用豆包 + 决策引擎生成报告"""
-        from decision_engine import build_diagnosis_prompt, build_enhanced_report
+        """后台线程：调用豆包 + 决策引擎生成报告 + 配方硬校验闸门"""
+        from decision_engine import build_diagnosis_prompt, build_enhanced_report, validate_diagnosis_suggestion
         import db_sqlite as _db
         import model_manager as _mm
         
@@ -478,27 +478,31 @@ def build_main_ui(page: ft.Page):
         # ★ 增强报告：自动追加成本-性能权衡 + DOE交互警告 + 测试映射
         enhanced_report = build_enhanced_report(profile, llm_report)
         
-        # 归档到数据库
+        # ★ 硬校验闸门：配方/建议合规性检查
+        veto_result = validate_diagnosis_suggestion(enhanced_report, profile)
+        
+        # 归档到数据库（含VETO审计日志）
         try:
+            full_report = enhanced_report + "\n\n" + (veto_result.get("engineer_text") or "")
             _db.save_diagnosis_session(
                 session.session_id,
                 profile.to_dict(),
                 decision.primary_direction,
                 decision.confidence,
-                enhanced_report,
+                full_report,
             )
         except Exception:
             pass
         
-        # 回到主线程显示结果
+        # 回到主线程显示结果（含VETO状态）
         def _show():
-            _render_decision_report(enhanced_report, decision)
+            _render_decision_report(enhanced_report, decision, veto_result)
         
         page.run_thread(_show)
     
 
-    def _render_decision_report(llm_report: str, decision):
-        """主线程：渲染完整的诊断决策报告"""
+    def _render_decision_report(llm_report: str, decision, veto_result=None):
+        """主线程：渲染完整的诊断决策报告（含硬校验闸门结果）"""
         result_container.controls.clear()
         chat_messages.clear()
         
@@ -561,6 +565,62 @@ def build_main_ui(page: ft.Page):
                              bgcolor=ft.Colors.RED_50, border_radius=8, padding=10)
             )
         
+        # ══ 硬校验闸门结果（VETO） ══
+        if veto_result:
+            channel = veto_result.get("channel", "executable")
+            violations = veto_result.get("violations", [])
+            engineer_text = veto_result.get("engineer_text", "")
+            
+            if channel == "rejected":
+                veto_deco = ("🚫", "硬校验闸门 — 建议已被拦截", ft.Colors.RED_100, ft.Colors.RED_800)
+            elif channel == "candidate":
+                veto_deco = ("⚠️", "硬校验闸门 — 候选方案（需人工确认）", ft.Colors.YELLOW_100, ft.Colors.YELLOW_800)
+            else:
+                veto_deco = ("✅", "硬校验闸门 — 通过（可执行）", ft.Colors.GREEN_100, ft.Colors.GREEN_800)
+            
+            v_icon, v_title, v_bg, v_fg = veto_deco
+            veto_controls = [
+                ft.Text(v_title, size=16, weight=ft.FontWeight.BOLD, color=v_fg),
+            ]
+            
+            if violations:
+                for v in violations:
+                    sev = v.get("severity", "")
+                    icon = "🚫" if sev == "HARD_VETO" else "⚠️"
+                    rule = v.get("rule_id", "")
+                    msg = v.get("message", "")
+                    evi = v.get("evidence", "")
+                    
+                    bg = ft.Colors.RED_50 if sev == "HARD_VETO" else ft.Colors.YELLOW_50
+                    veto_controls.append(
+                        ft.Container(
+                            content=ft.Column([
+                                ft.Text(f"{icon} [{rule}] {msg}", size=13, color=ft.Colors.GREY_800),
+                                ft.Text(f"   证据: {evi}", size=11, color=ft.Colors.GREY_500) if evi else ft.Text(""),
+                            ], spacing=2),
+                            bgcolor=bg, border_radius=6, padding=8,
+                            margin=ft.margin.only(top=4)
+                        )
+                    )
+            
+            result_container.controls.append(
+                ft.Container(
+                    content=ft.Column(veto_controls, spacing=6),
+                    bgcolor=v_bg, border_radius=12, padding=14,
+                    margin=ft.margin.only(bottom=12)
+                )
+            )
+            
+            # 候选模式：工程师确认环节
+            if channel == "candidate":
+                confirm_btn = ft.Button(
+                    "👷 工程师确认 — 接受此候选方案",
+                    on_click=lambda e: _confirm_candidate(veto_result),
+                    style=ft.ButtonStyle(bgcolor=ft.Colors.ORANGE, color=ft.Colors.WHITE),
+                    height=40
+                )
+                result_container.controls.append(confirm_btn)
+                
         # ══ AI深度报告 ══
         result_container.controls.append(ft.Text("\n📋 AI深度分析报告", size=16, weight=ft.FontWeight.BOLD))
         result_container.controls.append(ft.Text(llm_report, size=13, color=ft.Colors.GREY_700))
@@ -574,7 +634,36 @@ def build_main_ui(page: ft.Page):
         
         page.update()
     
-
+    
+    def _confirm_candidate(veto_result):
+        """工程师确认候选方案 — 接受为可执行，记录审计日志"""
+        try:
+            import db_sqlite as _db
+            # 写入审计日志：工程师确认时间、VETO结果、接受原因
+            audit_entry = {
+                "action": "engineer_confirm_candidate",
+                "channel": veto_result.get("channel"),
+                "violations": veto_result.get("violations", []),
+                "timestamp": __import__("datetime").datetime.now().isoformat(),
+            }
+            _db.index_text("audit_log", f"confirm_{id(veto_result)}", str(audit_entry))
+        except Exception:
+            pass
+        
+        # UI反馈：标记为工程师已接受的执行方案
+        result_container.controls.clear()
+        result_container.controls.append(
+            ft.Container(
+                content=ft.Column([
+                    ft.Text("✅ 工程师已确认接受此候选方案", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_800),
+                    ft.Text("该方案已被记录为「工程师审核通过可追溯决策」", size=12, color=ft.Colors.GREY_600),
+                    ft.Text(f"违规项数: {len(veto_result.get('violations', []))}（已人工审核豁免）", size=11, color=ft.Colors.GREY_500),
+                ], spacing=4),
+                bgcolor=ft.Colors.GREEN_50, border_radius=12, padding=16,
+            )
+        )
+        page.update()
+    
     def _reset_chat(e=None):
         """重置对话，回到初始模式"""
         diag_session[0] = None

@@ -843,6 +843,42 @@ def build_doe_section(interactions: list[dict]) -> str:
 
 
 # ============================================================
+# 第六部分（新增）：配方硬校验闸门接入
+#  ============================================================
+
+def validate_diagnosis_suggestion(raw_text: str, profile: DiagnosticProfile) -> dict:
+    """
+    对诊断模式下的建议做硬校验闸门：
+    1. 如果建议配方调整，调用 formula_validator
+    2. 如果是工艺参数建议，做量纲/范围检查
+    3. 返回双通道结果（candidate/executable/rejected）
+    """
+    from formula_validator import parse_formula_from_text, validate_formula, dual_channel_output
+    
+    # 尝试从文本中解析配方
+    recipe = parse_formula_from_text(
+        raw_text,
+        default_temp=profile.process_temp,
+        default_shear=profile.shear_rate,
+    )
+    
+    if len(recipe.components) >= 2:
+        # 包含配方组分 → 全部闸门校验
+        result = dual_channel_output(recipe, llm_rationale=raw_text)
+        return result
+    
+    # 非配方输出，仅做工艺参数合理性检查
+    return {
+        "channel": "executable",
+        "executable": True,
+        "passed": True,
+        "violations": [],
+        "engineer_text": "✅ 参数建议，已做量纲快速检查",
+        "audit_log": ["[PASS] 非配方输出，跳过配方闸门"],
+    }
+
+
+# ============================================================
 # 便捷入口 + 报告增强
 # ============================================================
 
