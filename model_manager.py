@@ -39,11 +39,30 @@ class ModelManager:
         self.chat_url = os.getenv("DOUBAO_CHAT_ENDPOINT", "https://ark.cn-beijing.volces.com/api/v3/chat/completions")
         self.model_id = os.getenv("DOUBAO_MODEL_ID", "doubao-seed-2-1-lite-260915")
         self.timeout = int(os.getenv("DOUBAO_TIMEOUT", "300"))
+        # Fallback: 如果环境变量没 key，尝试从 SQLite 读取（登录时已保存）
+        if not self.api_key:
+            try:
+                import db_sqlite as _db
+                _db.DB_PATH = str(_db.Path(_db.__file__).parent / "pcm_knowledge.db")
+                saved_key = _db.load_setting("DOUBAO_API_KEY")
+                if saved_key:
+                    self.api_key = saved_key
+                    os.environ["DOUBAO_API_KEY"] = saved_key
+                saved_mid = _db.load_setting("DOUBAO_MODEL_ID")
+                if saved_mid:
+                    self.model_id = saved_mid
+                    os.environ["DOUBAO_MODEL_ID"] = saved_mid
+            except Exception:
+                pass
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
         self._limiter = RateLimiter(int(os.getenv("DOUBAO_RPS_LIMIT", "5")))
+
+    def close(self):
+        """无状态连接无需关闭，但提供此接口供调用方安全调用"""
+        pass
 
     def chat_completion(self, system_prompt: str, user_content: str,
                         temperature: float = 0.1, max_tokens: int = 2048) -> str:
@@ -55,7 +74,7 @@ class ModelManager:
                 {"role": "user", "content": user_content},
             ],
             "temperature": temperature,
-            "max_tokens": min(max_tokens, 1024),
+            "max_tokens": min(max_tokens, 4096),
         }
         logger.debug(f"豆包请求: model={self.model_id}, user_len={len(user_content)}")
         resp = requests.post(

@@ -46,6 +46,11 @@ def init_mobile_db():
     try:
         import db_sqlite as _db
         _db.init_db()
+        # 注入核心知识（配方失效模式、决策规则、经验规则）
+        try:
+            _db.seed_default_knowledge()
+        except Exception as e:
+            print(f"知识库注入警告: {e}")
     except Exception as e:
         print(f"移动端DB初始化警告: {e}")
     return db_path
@@ -286,85 +291,323 @@ def build_main_ui(page: ft.Page):
     
     progress_ring = ft.ProgressRing(visible=False)
     progress_text = ft.Text("", size=14, color=ft.Colors.GREY_700)
-    result_container = ft.Column([], spacing=12)
+    result_container = ft.Column([], spacing=12, scroll=ft.ScrollMode.AUTO)
     diagnosis_result = {}  # 保存最新结果
     
+    # ══ AI主导多轮诊断对话状态 ══
+    diag_session = [None]        # DiagnosticSession 实例
+    chat_mode = [False]          # 是否已进入对话模式
+    chat_messages = []           # (role, text) 消息列表
+    
+
+    def add_message(role: str, text: str):
+        """往对话区添加一条气泡消息"""
+        chat_messages.append((role, text))
+        if role == "user":
+            result_container.controls.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("👤 你", size=11, color=ft.Colors.GREY_500),
+                        ft.Text(text, size=14, color=ft.Colors.WHITE),
+                    ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END),
+                    bgcolor=ft.Colors.BLUE_500,
+                    border_radius=border_radius_rtl(12),
+                    padding=10, width=280,
+                    margin=ft.margin.only(left=40, top=4, bottom=4),
+                    alignment=ft.alignment.center_right,
+                )
+            )
+        elif role == "ai":
+            result_container.controls.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("🔬 AI诊断助理", size=11, color=ft.Colors.GREY_500),
+                        ft.Text(text, size=14),
+                    ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.START),
+                    bgcolor=ft.Colors.with_opacity(0.08, ft.Colors.ON_SURFACE),
+                    border_radius=border_radius_ltr(12),
+                    padding=10, width=320,
+                    margin=ft.margin.only(right=40, top=4, bottom=4),
+                )
+            )
+        elif role == "system":
+            result_container.controls.append(
+                ft.Container(
+                    content=ft.Text(text, size=12, color=ft.Colors.GREY_600, italic=True),
+                    padding=8,
+                    alignment=ft.alignment.center,
+                )
+            )
+        page.update()
+    
+
     def on_run_diagnosis(e):
-        if not problem_input.value.strip():
+        """主按钮点击：首次=开始排查, 后续=发送回答"""
+        if not chat_mode[0]:
+            _start_diagnosis_chat()
+        else:
+            _send_chat_answer()
+    
+
+    def _start_diagnosis_chat():
+        """首次点击：用输入的文本启动多轮对话"""
+        initial_text = problem_input.value.strip()
+        if not initial_text:
             page.show_snack_bar(ft.SnackBar(content=ft.Text("请先输入偏差描述")))
             return
         
+        # 导入决策引擎
+        try:
+            from decision_engine import DiagnosticSession
+        except ImportError:
+            page.show_snack_bar(ft.SnackBar(content=ft.Text("⚠️ 决策引擎未就绪，请检查安装")))
+            return
+        
+        # 创建对话会话
+        diag_session[0] = DiagnosticSession()
+        
+        # 尝试从初始文本提取失效模式
+        diag_session[0].profile.failure_mode = initial_text
+        
+        # 生成第一个追问
+        first_q = diag_session[0].generate_next_question()
+        
+        if first_q is None:
+            # 信息已足够（不太可能发生）
+            _finalize_diagnosis()
+            return
+        
+        # 切换到对话模式
+        chat_mode[0] = True
+        problem_input.value = ""
+        problem_input.label = "✎ 输入你的回答..."
+        problem_input.hint_text = "直接输入文字，完成后点右侧 →"
+        problem_input.min_lines = 1
+        problem_input.max_lines = 3
+        
+        # 清空结果区，显示对话气泡
         result_container.controls.clear()
+        add_message("system", f"已记录问题描述：{initial_text[:60]}{'...' if len(initial_text) > 60 else ''}")
+        add_message("ai", first_q)
+        
+        # 更新按钮
+        _update_main_button("发送 →", ft.Colors.GREEN)
+        page.update()
+    
+
+    def _send_chat_answer():
+        """对话模式：处理用户回答 -> 生成下一个追问或最终报告"""
+        user_text = problem_input.value.strip()
+        if not user_text:
+            return
+        
+        add_message("user", user_text)
+        problem_input.value = ""
+        
+        session = diag_session[0]
+        
+        # 把回答记录到画像的对应字段
+        field = session._pending_field
+        if field:
+            session.record_answer(field, user_text)
+        
+        # 生成下一个追问
+        next_q = session.generate_next_question()
+        
+        if next_q:
+            add_message("ai", next_q)
+            page.update()
+        else:
+            # 信息充分 -> 输出最终诊断
+            _finalize_diagnosis()
+    
+
+    def _finalize_diagnosis():
+        """信息收集完毕：调用豆包 + 决策引擎输出完整报告"""
         progress_ring.visible = True
-        progress_text.value = "🚀 启动诊断引擎..."
+        progress_text.value = "⏳ AI正在综合分析，请稍候（约15~30秒）..."
+        _update_main_button("分析中...", ft.Colors.GREY)
         page.update()
         
-        def progress_cb(data):
-            progress_text.value = f"[{data['stage']}] {data['message']}"
-            page.update()
-        
-        def thread_work():
+        def _work():
             try:
-                nonlocal diagnosis_result
-                diagnosis_result = run_diagnosis(problem_input.value.strip(), progress_cb)
-                # 回到主线程更新UI
-                page.run_thread(lambda: show_result(diagnosis_result))
+                _run_llm_diagnosis()
             except Exception as exc:
-                err_msg = str(exc)
-                page.run_thread(lambda msg=err_msg: setattr(progress_text, 'value', f"❌ 错误: {msg}"))
+                err = str(exc)[:200]
+                page.run_thread(lambda: add_message("system", f"❌ 分析过程出错: {err}"))
             finally:
                 page.run_thread(lambda: setattr(progress_ring, 'visible', False))
+                page.run_thread(lambda: setattr(progress_text, 'value', ""))
         
-        t = threading.Thread(target=thread_work, daemon=True)
-        t.start()
+        threading.Thread(target=_work, daemon=True).start()
     
-    def show_result(result):
-        """诊断结果展示"""
-        result_container.controls.clear()
-        result_container.controls.append(
-            ft.Text("🎯 诊断结果", size=20, weight=ft.FontWeight.BOLD)
+
+    def _run_llm_diagnosis():
+        """后台线程：调用豆包 + 决策引擎生成报告"""
+        from decision_engine import build_diagnosis_prompt
+        import db_sqlite as _db
+        import model_manager as _mm
+        
+        session = diag_session[0]
+        profile = session.profile
+        
+        # 知识库检索
+        retrieved = _db.retrieve(profile.failure_mode, top_k=5)
+        
+        # 构造增强 prompt
+        sys_prompt, user_msg = build_diagnosis_prompt(profile, retrieved)
+        
+        # 获取模型
+        model = _mm.get_model()
+        
+        # 调用豆包
+        llm_report = model.chat_completion(
+            sys_prompt, user_msg,
+            temperature=0.3, max_tokens=2000,
         )
         
-        # 假设列表
-        if result.get("hypotheses"):
-            for i, (h, p) in enumerate(result["hypotheses"].items(), 1):
+        # 关闭模型（释放连接）
+        try:
+            model.close()
+        except Exception:
+            pass
+        
+        # 决策引擎输出
+        decision = session.finalize()
+        
+        # 归档到数据库
+        try:
+            _db.save_diagnosis_session(
+                session.session_id,
+                profile.to_dict(),
+                decision.primary_direction,
+                decision.confidence,
+                llm_report,
+            )
+        except Exception:
+            pass
+        
+        # 回到主线程显示结果
+        def _show():
+            _render_decision_report(llm_report, decision)
+        
+        page.run_thread(_show)
+    
+
+    def _render_decision_report(llm_report: str, decision):
+        """主线程：渲染完整的诊断决策报告"""
+        result_container.controls.clear()
+        chat_messages.clear()
+        
+        # ══ 决策头部卡片 ══
+        if decision.primary_direction == "formula":
+            deco = ("🔧", "优先调整配方", ft.Colors.ORANGE_100, ft.Colors.ORANGE_800)
+        elif decision.primary_direction == "process":
+            deco = ("⚙️", "优先调整工艺", ft.Colors.BLUE_100, ft.Colors.BLUE_800)
+        else:
+            deco = ("🔍", "需进一步验证", ft.Colors.GREY_200, ft.Colors.GREY_800)
+        
+        icon, title, bg, fg = deco
+        result_container.controls.append(
+            ft.Container(
+                content=ft.Row([
+                    ft.Text(icon, size=32),
+                    ft.Column([
+                        ft.Text(title, size=20, weight=ft.FontWeight.BOLD, color=fg),
+                        ft.Text(
+                            f"  置信度: {decision.confidence:.0%}  |  配方调整得分: {decision.formula_score}  vs  工艺调整得分: {decision.process_score}",
+                            size=13, color=ft.Colors.GREY_700),
+                    ], spacing=4, expand=True),
+                ], alignment=ft.MainAxisAlignment.START, spacing=12),
+                bgcolor=bg, border_radius=12, padding=16,
+                margin=ft.margin.only(bottom=12),
+            )
+        )
+        
+        # ══ 决策推理 ══
+        result_container.controls.append(ft.Text("📊 决策推理依据", size=16, weight=ft.FontWeight.BOLD))
+        result_container.controls.append(ft.Text(decision.reasoning, size=13))
+        
+        # ══ 可能根因 ══
+        if decision.hypothesis_list:
+            result_container.controls.append(ft.Text("\n💡 可能根因", size=16, weight=ft.FontWeight.BOLD))
+            for h in decision.hypothesis_list:
                 result_container.controls.append(
-                    ft.Card(ft.Container(
-                        content=ft.Column([
-                            ft.Text(f"H{i}: {h}", size=14, weight=ft.FontWeight.W_500),
-                            ft.ProgressBar(value=p, color=ft.Colors.BLUE, bar_height=8),
-                            ft.Text(f"置信度: {p:.0%}", size=12, color=ft.Colors.GREY),
-                        ], spacing=6),
-                        padding=12
-                    ), elevation=2)
+                    ft.Container(content=ft.Text(h, size=13), padding=8,
+                                 bgcolor=ft.Colors.BLUE_50, border_radius=8)
                 )
         
-        # 根因
-        if result.get("root_cause"):
+        # ══ 行动清单 ══
+        if decision.action_checklist:
+            result_container.controls.append(ft.Text("\n✅ 行动清单（按优先级）", size=16, weight=ft.FontWeight.BOLD))
+            for i, item in enumerate(decision.action_checklist, 1):
+                result_container.controls.append(
+                    ft.Row([
+                        ft.Container(content=ft.Text(str(i), size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                            bgcolor=ft.Colors.GREEN_600, border_radius=12, width=24, height=24,
+                            alignment=ft.alignment.center),
+                        ft.Text(item, size=13, expand=True),
+                    ], alignment=ft.MainAxisAlignment.START)
+                )
+        
+        # ══ 风险提示 ══
+        if decision.risk_warning:
+            result_container.controls.append(ft.Text("\n⚠️ 风险提示", size=16, weight=ft.FontWeight.BOLD))
             result_container.controls.append(
-                ft.Card(ft.Container(
-                    content=ft.Column([
-                        ft.Text("🎯 锁定根因", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.RED_700),
-                        ft.Text(result["root_cause"], size=14),
-                    ], spacing=8),
-                    padding=16, bgcolor=ft.Colors.RED_50
-                ), elevation=3)
+                ft.Container(content=ft.Text(decision.risk_warning, size=13, color=ft.Colors.RED_700),
+                             bgcolor=ft.Colors.RED_50, border_radius=8, padding=10)
             )
         
-        # 跳转按钮
+        # ══ AI深度报告 ══
+        result_container.controls.append(ft.Text("\n📋 AI深度分析报告", size=16, weight=ft.FontWeight.BOLD))
+        result_container.controls.append(ft.Text(llm_report, size=13, color=ft.Colors.GREY_700))
+        
+        # ══ 重新开始按钮 ══
         result_container.controls.append(
-            ft.Row([
-                ft.Button("查看改善方案", icon=ft.Icons.ARTICLE,
-                    on_click=lambda _: nav_bar.selected_index == 1 and on_nav_change(1)),
-                ft.Button("查看审计报告", icon=ft.Icons.SHIELD,
-                    on_click=lambda _: (setattr(nav_bar, 'selected_index', 2), on_nav_change(2))),
-            ], alignment=ft.MainAxisAlignment.CENTER)
+            ft.Button("🔄 开始新一轮排查", on_click=_reset_chat,
+                style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN, color=ft.Colors.WHITE),
+                height=44)
         )
         
         page.update()
     
+
+    def _reset_chat(e=None):
+        """重置对话，回到初始模式"""
+        diag_session[0] = None
+        chat_mode[0] = False
+        chat_messages.clear()
+        problem_input.value = ""
+        problem_input.label = "描述工艺偏差现象"
+        problem_input.hint_text = "例：XX材料小试OK，放大后性能下降..."
+        problem_input.min_lines = 3
+        problem_input.max_lines = 6
+        progress_ring.visible = False
+        progress_text.value = ""
+        result_container.controls.clear()
+        # 显示快捷案例行（通过重建页面）
+        try:
+            nav_bar.selected_index = 0
+            on_nav_change(0)
+        except Exception:
+            pass
+    
+    # 辅助函数：圆角（左右区分）
+    def border_radius_rtl(radius):
+        return ft.BorderRadius(top_left=radius, top_right=2, bottom_left=radius, bottom_right=radius)
+    
+    def border_radius_ltr(radius):
+        return ft.BorderRadius(top_left=2, top_right=radius, bottom_left=radius, bottom_right=radius)
+    
+    # 主按钮的引用（在 build_diagnosis_page 中初始化）
+    _main_btn_ref = [None]  # mutable container for ft.Ref
+    
+    def _update_main_button(text, color):
+        """更新主按钮的文字和颜色（由 build_diagnosis_page 内的闭包覆盖）"""
+        pass
+    
     def build_diagnosis_page():
-        """输入 + 问题描述页"""
+        """AI主导多轮诊断对话页：初始输入 + 追问交互"""
         voice_status = ft.Text("", size=13, color=ft.Colors.GREY_600)
         is_recording = [False]
 
@@ -378,7 +621,6 @@ def build_main_ui(page: ft.Page):
                 voice_status.value = "🔴 录音中..."
                 page.update()
                 try:
-                    # 新版 Flet: stop_recording 是 async
                     try:
                         import asyncio
                         loop = asyncio.new_event_loop()
@@ -388,7 +630,6 @@ def build_main_ui(page: ft.Page):
                             loop.close()
                     except Exception:
                         rec_path = audio_recorder.stop_recording()
-
                     voice_status.value = "⏹ 录音结束，识别中..."
                     page.update()
                     import voice_api
@@ -403,10 +644,8 @@ def build_main_ui(page: ft.Page):
                     voice_status.value = f"❌ 识别失败: {str(ex)[:40]}"
                 page.update()
             else:
-                # 开始录音
                 rec_path = os.path.join(os.path.dirname(__file__), "temp_rec.opus")
                 try:
-                    # 新版 Flet: start_recording 是 async
                     try:
                         import asyncio
                         loop = asyncio.new_event_loop()
@@ -430,21 +669,76 @@ def build_main_ui(page: ft.Page):
             ("胶粘剂不干", "双组份聚氨酯胶粘剂：混合后24h仍未完全固化"),
         ]
         
-        quick_btns = []
-        for label, text in quick_cases:
-            quick_btns.append(
-                ft.Button(label, 
-                    on_click=lambda e, t=text: set_and_fill(t),
-                    height=40, style=ft.ButtonStyle(text_style=ft.TextStyle(size=12)))
-            )
+        quick_btns = [ft.Button(label, on_click=lambda e, t=text: set_and_fill(t),
+            height=40, style=ft.ButtonStyle(text_style=ft.TextStyle(size=12))) for label, text in quick_cases]
         
         def set_and_fill(text):
             problem_input.value = text
             page.update()
         
+        # 主按钮
+        main_btn_ref = ft.Ref[ft.Button]()
+        
+        def rebuild_main_btn():
+            btn = main_btn_ref.current
+            if btn is None:
+                page.update()
+                return
+            if not chat_mode[0]:
+                btn.content = ft.Row([
+                    ft.Icon(ft.Icons.PLAY_ARROW, size=18),
+                    ft.Text("开始AI排查", size=16, weight=ft.FontWeight.BOLD),
+                ], alignment=ft.MainAxisAlignment.CENTER, spacing=6)
+                btn.style = ft.ButtonStyle(bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
+                    padding=ft.Padding.symmetric(horizontal=32, vertical=16),
+                    shape=ft.RoundedRectangleBorder(radius=20))
+            elif diag_session[0] and diag_session[0].current_phase == 3:
+                btn.content = ft.Row([
+                    ft.Icon(ft.Icons.HOURGLASS_EMPTY, size=18),
+                    ft.Text("分析中...", size=16, weight=ft.FontWeight.BOLD),
+                ], alignment=ft.MainAxisAlignment.CENTER, spacing=6)
+                btn.style = ft.ButtonStyle(bgcolor=ft.Colors.GREY_400, color=ft.Colors.WHITE,
+                    shape=ft.RoundedRectangleBorder(radius=20))
+            else:
+                btn.content = ft.Row([
+                    ft.Text("发送", size=16, weight=ft.FontWeight.BOLD),
+                    ft.Icon(ft.Icons.SEND, size=18),
+                ], alignment=ft.MainAxisAlignment.CENTER, spacing=6)
+                btn.style = ft.ButtonStyle(bgcolor=ft.Colors.GREEN, color=ft.Colors.WHITE,
+                    padding=ft.Padding.symmetric(horizontal=24, vertical=12),
+                    shape=ft.RoundedRectangleBorder(radius=20))
+            try:
+                btn.update()
+            except Exception:
+                page.update()
+        
+        # 覆盖外层的 _update_main_button
+        globals()['_update_main_button'] = rebuild_main_btn
+        # 初始化按钮状态
+        # (按钮还未创建，等 Column 渲染后再 rebuild)
+        
+        # 延迟重建：Flet 需要在控件渲染后调用 ref
+        def _schedule_rebuild():
+            page.run_thread(lambda: (rebuild_main_btn(), None))
+        
+        main_btn = ft.Button(
+            ref=main_btn_ref,
+            content=ft.Row([
+                ft.Icon(ft.Icons.PLAY_ARROW, size=18),
+                ft.Text("开始AI排查", size=16, weight=ft.FontWeight.BOLD),
+            ], alignment=ft.MainAxisAlignment.CENTER, spacing=6),
+            on_click=on_run_diagnosis, height=50,
+            style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
+                padding=ft.Padding.symmetric(horizontal=32, vertical=16),
+                shape=ft.RoundedRectangleBorder(radius=20)),
+        )
+        
+        # 渲染后自动初始化按钮样式
+        page.run_thread(lambda: rebuild_main_btn())
+        
         return ft.Column([
             ft.Text("🔬 工艺偏差排查", size=24, weight=ft.FontWeight.BOLD),
-            ft.Text("描述您遇到的材料/工艺问题，AI将综合分析", size=14, color=ft.Colors.GREY_700),
+            ft.Text("AI主导诊断：你只需回答问题，AI综合分析后给出决策", size=14, color=ft.Colors.GREY_700),
             problem_input,
             *([ft.Row([
                 ft.Button("🎤 语音输入", icon=ft.Icons.MIC, on_click=toggle_recording,
@@ -452,17 +746,15 @@ def build_main_ui(page: ft.Page):
                 voice_status,
             ], alignment=ft.MainAxisAlignment.START)] if audio_recorder is not None else
                [ft.Text("ℹ️ 当前设备不支持语音输入，请使用文字描述", size=12, color=ft.Colors.GREY_500)]),
-            ft.Text("💡 快速案例", size=16, weight=ft.FontWeight.W_600),
+            ft.Row([
+                ft.Text("💡 快速案例", size=16, weight=ft.FontWeight.W_600, expand=True),
+            ]),
             ft.Row(quick_btns, wrap=True, spacing=8),
-            ft.Button("🚀 开始AI排查", icon=ft.Icons.PLAY_ARROW,
-                on_click=on_run_diagnosis,
-                style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE,
-                    padding=ft.Padding.symmetric(horizontal=32, vertical=16),
-                    shape=ft.RoundedRectangleBorder(radius=20)),
-                height=50),
+            main_btn,
             ft.Container(content=ft.Row([progress_ring, progress_text], alignment=ft.MainAxisAlignment.CENTER), padding=ft.Padding.symmetric(vertical=8)),
-            result_container,
-        ], spacing=16)
+            ft.Container(content=result_container, height=360, border_radius=12,
+                         border=ft.border.all(1, ft.Colors.GREY_300), padding=10),
+        ], spacing=12)
     
     def build_results_page():
         """结果页：方案卡 + 语音播报"""
