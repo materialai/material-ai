@@ -204,6 +204,14 @@ def init_db():
             final_root_cause TEXT,
             review_highlight TEXT
         );
+        -- 失败教训库（独立于故障案例库）
+        CREATE TABLE IF NOT EXISTS failure_lesson (
+            lesson_id TEXT PRIMARY KEY,
+            action_desc TEXT NOT NULL,
+            consequence TEXT,
+            redline TEXT NOT NULL,
+            loss_level TEXT
+        );
     """)
     conn.commit()
     return conn
@@ -651,21 +659,10 @@ def seed_default_knowledge():
             index_text(stype, sid, content)
 
     # ═══════════════════════════════════════════════════════════
-    # 三、失败教训（新增独立表：failure_lesson）
+    # 三、失败教训（failure_lesson — 表已移至 init_db）
     # ═══════════════════════════════════════════════════════════
-    fl_count = conn.execute(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='failure_lesson'"
-    ).fetchone()[0]
-    if fl_count == 0:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS failure_lesson (
-                lesson_id TEXT PRIMARY KEY,
-                action_desc TEXT NOT NULL,
-                consequence TEXT,
-                redline TEXT NOT NULL,
-                loss_level TEXT
-            )
-        """)
+    existing_fl = conn.execute("SELECT COUNT(*) FROM failure_lesson").fetchone()[0]
+    if existing_fl == 0:
         lessons = [
             ("FAIL-001", "一次性大量加稀释剂+8phr",
              "交联网络被稀释破坏、Tg大幅下降、冷热循环大批量开裂",

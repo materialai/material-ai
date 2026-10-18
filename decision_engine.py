@@ -391,7 +391,7 @@ def _build_reasoning(profile: DiagnosticProfile, f: int, p: int, rules: list[str
 
 
 def _build_hypotheses(profile: DiagnosticProfile, primary: str) -> list[str]:
-    """基于L0-L7生成假设列表"""
+    """基于L0-L7生成假设列表 — 始终包含框外根因的逃逸口"""
     hypotheses = []
     fm = profile.failure_mode
     
@@ -418,6 +418,9 @@ def _build_hypotheses(profile: DiagnosticProfile, primary: str) -> list[str]:
     # L1 用户非标工况假设
     if primary == "process" and profile.env_changed:
         hypotheses.append("L1非标工况: 用户非标操作/设备私改/加热不规范 → 先排除再查工艺")
+    
+    # ★ 框外根因逃逸口（必须存在 — gate_out_of_framework_escape 依赖此项）
+    hypotheses.append("其他根因（框架外）: L0-L7之外的未覆盖根因 → 建议工程师排查：原料供应商工艺变更/设备交叉污染/质检取样偏差/环境交叉影响")
     
     return hypotheses
 
@@ -848,26 +851,65 @@ def build_doe_section(interactions: list[dict]) -> str:
 
 def validate_diagnosis_suggestion(raw_text: str, profile: DiagnosticProfile) -> dict:
     """
-    对诊断模式下的建议做硬校验闸门：
+    对诊断模式下的建议做硬校验闸门（轻量版，向后兼容）：
     1. 如果建议配方调整，调用 formula_validator
     2. 如果是工艺参数建议，做量纲/范围检查
     3. 返回双通道结果（candidate/executable/rejected）
-    """
-    from formula_validator import parse_formula_from_text, validate_formula, dual_channel_output
     
-    # 尝试从文本中解析配方
+    注意：全量校验请用 formula_validator.validate_diagnosis_comprehensive()
+    """
+    from formula_validator import (
+        parse_formula_from_text, validate_formula, dual_channel_output,
+        gate_process_safety_window, gate_failure_lesson_intercept,
+    )
+    
+    violations = []
+    
+    # 工艺安全窗口校验（新增）
+    violations.extend(gate_process_safety_window(profile, raw_text))
+    
+    # 失败教训红线校验（新增，代码级硬拦截）
+    violations.extend(gate_failure_lesson_intercept(profile, raw_text))
+    
+    # 尝试从文本中解析配方（profile没有process_temp，用env_temp或默认25°C）
+    _proc_temp = getattr(profile, 'env_temp', None) or 25
+    _shear = getattr(profile, 'shear_rate', None) or 0
     recipe = parse_formula_from_text(
         raw_text,
-        default_temp=profile.process_temp,
-        default_shear=profile.shear_rate,
+        default_temp=_proc_temp,
+        default_shear=_shear,
     )
     
     if len(recipe.components) >= 2:
         # 包含配方组分 → 全部闸门校验
         result = dual_channel_output(recipe, llm_rationale=raw_text)
+        # 合并新增violations
+        for v in violations:
+            result["violations"].append({
+                "gate": v.gate, "severity": v.severity,
+                "rule_id": v.rule_id, "message": v.message, "evidence": v.evidence
+            })
+        # 重新计算channel
+        has_hard = any(v.get("severity") == "HARD_VETO" or v.severity == "HARD_VETO" for v in violations)
+        if has_hard and result["channel"] != "rejected":
+            result["channel"] = "rejected"
+            result["executable"] = False
         return result
     
     # 非配方输出，仅做工艺参数合理性检查
+    if violations:
+        hard = [v for v in violations if v.severity == "HARD_VETO"]
+        warns = [v for v in violations if v.severity == "WARNING"]
+        channel = "rejected" if hard else ("candidate" if warns else "executable")
+        return {
+            "channel": channel,
+            "executable": channel == "executable",
+            "violations": [{"gate": v.gate, "severity": v.severity, "rule_id": v.rule_id,
+                           "message": v.message, "evidence": v.evidence} for v in violations],
+            "engineer_text": "\n".join(f"{'🚫' if v.severity=='HARD_VETO' else '⚠️'} [{v.rule_id}] {v.message}" for v in violations),
+            "audit_log": [f"[{channel.upper()}] {v.rule_id}: {v.message}" for v in violations],
+        }
+    
     return {
         "channel": "executable",
         "executable": True,
