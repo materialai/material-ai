@@ -252,22 +252,56 @@ def build_main_ui(page: ft.Page):
     if page.width < 600:
         page.window.width = page.width
     
-    # ====== 导航栏 ======
-    nav_bar = ft.NavigationBar(
-        destinations=[
-            ft.NavigationBarDestination(icon=ft.Icons.SEARCH, label="排查"),
-            ft.NavigationBarDestination(icon=ft.Icons.ANALYTICS, label="结果"),
-            ft.NavigationBarDestination(icon=ft.Icons.SHIELD, label="审计"),
-            ft.NavigationBarDestination(icon=ft.Icons.BOOK, label="知识库"),
-            ft.NavigationBarDestination(icon=ft.Icons.SETTINGS, label="设置"),
-        ],
-        on_change=lambda e: on_nav_change(e.control.selected_index)
-    )
+    # ====== 导航栏（Android兼容：ft.NavigationBar依赖Material3，替换为Row按钮） ======
+    nav_items = [
+        (ft.Icons.SEARCH, "排查"),
+        (ft.Icons.ANALYTICS, "结果"),
+        (ft.Icons.SHIELD, "审计"),
+        (ft.Icons.BOOK, "知识库"),
+        (ft.Icons.SETTINGS, "设置"),
+    ]
+    nav_btn_refs = [ft.Ref[ft.Button]() for _ in nav_items]
+    current_nav = [0]
+
+    def make_nav_handler(idx):
+        def handler(e):
+            on_nav_change(idx)
+        return handler
+
+    nav_bar = ft.Row([
+        ft.Button(
+            text,
+            icon=icon,
+            ref=nav_btn_refs[i],
+            expand=True,
+            height=56,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.BLUE_100 if i == 0 else ft.Colors.TRANSPARENT,
+                color=ft.Colors.BLUE_800 if i == 0 else ft.Colors.GREY_700,
+                shape=ft.RoundedRectangleBorder(radius=0),
+                padding=ft.Padding.symmetric(vertical=6),
+                text_style=ft.TextStyle(size=11),
+            ),
+            on_click=make_nav_handler(i),
+        )
+        for i, (icon, text) in enumerate(nav_items)
+    ], alignment=ft.MainAxisAlignment.SPACE_AROUND, spacing=0)
     
     # ====== 内容页容器 ======
     content_area = ft.Column([], scroll=ft.ScrollMode.AUTO, expand=True)
     
     def on_nav_change(index):
+        current_nav[0] = index
+        for i, ref in enumerate(nav_btn_refs):
+            btn = ref.current
+            if btn is not None:
+                btn.style = ft.ButtonStyle(
+                    bgcolor=ft.Colors.BLUE_100 if i == index else ft.Colors.TRANSPARENT,
+                    color=ft.Colors.BLUE_800 if i == index else ft.Colors.GREY_700,
+                    shape=ft.RoundedRectangleBorder(radius=0),
+                    padding=ft.Padding.symmetric(vertical=6),
+                    text_style=ft.TextStyle(size=11),
+                )
         content_area.controls.clear()
         if index == 0:
             content_area.controls.append(build_diagnosis_page())
@@ -324,7 +358,7 @@ def build_main_ui(page: ft.Page):
                         ft.Text("🔬 AI诊断助理", size=11, color=ft.Colors.GREY_500),
                         ft.Text(text, size=14),
                     ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.START),
-                    bgcolor=ft.Colors.with_opacity(0.08, ft.Colors.ON_SURFACE),
+                    bgcolor=ft.Colors.GREY_100,
                     border_radius=border_radius_ltr(12),
                     padding=10, width=320,
                     margin=ft.margin.only(right=40, top=4, bottom=4),
@@ -679,7 +713,6 @@ def build_main_ui(page: ft.Page):
         result_container.controls.clear()
         # 显示快捷案例行（通过重建页面）
         try:
-            nav_bar.selected_index = 0
             on_nav_change(0)
         except Exception:
             pass
@@ -845,7 +878,7 @@ def build_main_ui(page: ft.Page):
             main_btn,
             ft.Container(content=ft.Row([progress_ring, progress_text], alignment=ft.MainAxisAlignment.CENTER), padding=ft.Padding.symmetric(vertical=8)),
             ft.Container(content=result_container, height=360, border_radius=12,
-                         border=ft.border.all(1, ft.Colors.GREY_300), padding=10),
+                         padding=10, bgcolor=ft.Colors.GREY_50),
         ], spacing=12)
     
     def build_results_page():
@@ -893,7 +926,7 @@ def build_main_ui(page: ft.Page):
             ft.Container(
                 content=ft.Text(sol, size=13, color=ft.Colors.GREY_800),
                 padding=16, bgcolor=ft.Colors.WHITE,
-                border_radius=12, border=ft.border.all(1, ft.Colors.GREY_300)
+                border_radius=12
             ),
             ft.Row([
                 ft.Button("🔊 语音播报", icon=ft.Icons.VOLUME_UP, on_click=speak_solution,
@@ -1032,37 +1065,38 @@ def build_main_ui(page: ft.Page):
             lesson_status,
         ], spacing=10)
 
-        # Flet 1.0.x 改用 TabBar + TabBarView; Tab 只接受 label
-        page_tabs = ft.Tabs(
-            length=3,
-            selected_index=0,
-            expand=True,
-            content=ft.Column(
-                expand=True,
-                controls=[
-                    ft.TabBar(
-                        expand=True,
-                        tabs=[
-                            ft.Tab(label="📋 案例录入"),
-                            ft.Tab(label="📐 规则录入"),
-                            ft.Tab(label="🚫 教训红线"),
-                        ],
-                    ),
-                    ft.TabBarView(
-                        expand=True,
-                        controls=[
-                            ft.Container(content=tab_case, padding=10, expand=True),
-                            ft.Container(content=tab_rule, padding=10, expand=True),
-                            ft.Container(content=tab_lesson, padding=10, expand=True),
-                        ],
-                    ),
-                ],
-            ),
-        )
+        # Android 兼容：用可见性切换替代 TabBar/TabBarView（后者在 Android 上不可用）
+        tab_buttons = ft.Row([], spacing=4)
+        tab_pages = ft.Stack([tab_case, tab_rule, tab_lesson], expand=True)
+        current_tab = [0]
+        
+        def switch_tab(idx):
+            current_tab[0] = idx
+            for i, c in enumerate(tab_pages.controls):
+                c.visible = (i == idx)
+            for i, btn in enumerate(tab_buttons.controls):
+                btn.style = ft.ButtonStyle(
+                    bgcolor=ft.Colors.BLUE_100 if i == idx else ft.Colors.GREY_200,
+                    color=ft.Colors.BLUE_800 if i == idx else ft.Colors.GREY_700,
+                )
+            try:
+                page.update()
+            except Exception:
+                pass
+        
+        for idx, label in enumerate(["📋 案例", "📐 规则", "🚫 教训"]):
+            btn = ft.Button(label, on_click=lambda e, i=idx: switch_tab(i), height=36,
+                            style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_100 if idx == 0 else ft.Colors.GREY_200,
+                                                 color=ft.Colors.BLUE_800 if idx == 0 else ft.Colors.GREY_700))
+            tab_buttons.controls.append(btn)
+        
+        # 初始显示第一个
+        tab_rule.visible = False
+        tab_lesson.visible = False
 
         return ft.Column([
             ft.Text("📚 知识库管理", size=20, weight=ft.FontWeight.BOLD),
-            ft.Card(ft.Container(
+            ft.Container(
                 content=ft.Row([
                     ft.Column([
                         f"经验规则: {stats.get('rules', 0)}",
@@ -1073,9 +1107,10 @@ def build_main_ui(page: ft.Page):
                         f"方案数量: {stats.get('solutions', 0)}",
                     ], spacing=4),
                 ], alignment=ft.MainAxisAlignment.SPACE_AROUND),
-                padding=16
-            )),
-            ft.Container(content=page_tabs, padding=ft.Padding.symmetric(vertical=8)),
+                padding=16, bgcolor=ft.Colors.WHITE, border_radius=12,
+            ),
+            tab_buttons,
+            tab_pages,
         ], spacing=12)
 
     def build_audit_page():
@@ -1091,21 +1126,24 @@ def build_main_ui(page: ft.Page):
         for k, v in scores.items():
             score_val = v if isinstance(v, (int, float)) else 5
             audit_cards.append(
-                ft.Card(ft.Container(
+                ft.Container(
                     content=ft.Column([
                         ft.Text(k, size=14, weight=ft.FontWeight.W_600),
-                        ft.ProgressBar(value=score_val/10, color=ft.Colors.GREEN, bar_height=10),
-                        ft.Text(f"{v}/10", size=18, weight=ft.FontWeight.BOLD),
+                        ft.Text(f"{v}/10", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN),
                     ], spacing=6),
-                    padding=12
-                ), elevation=2)
+                    padding=12, bgcolor=ft.Colors.WHITE, border_radius=8
+                )
             )
         
         issues = []
         full_audit = diagnosis_result.get("full_audit", {})
         for issue in full_audit.get("issues", [][:5]):
             issues.append(
-                ft.Chip(ft.Text(f"⚠️ {issue.get('type')}: {issue.get('description', '')[:30]}"))
+                ft.Container(
+                    content=ft.Text(f"⚠️ {issue.get('type')}: {issue.get('description', '')[:30]}", size=12),
+                    padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+                    bgcolor=ft.Colors.RED_50, border_radius=16
+                )
             )
         
         return ft.Column([
@@ -1153,7 +1191,7 @@ def build_main_ui(page: ft.Page):
 
         return ft.Column([
             ft.Text("⚙️ 设置", size=20, weight=ft.FontWeight.BOLD),
-            ft.Card(ft.Container(
+            ft.Container(
                 content=ft.Column([
                     ft.Text("豆包 API 配置", size=16, weight=ft.FontWeight.W_600),
                     api_key_field,
@@ -1162,24 +1200,24 @@ def build_main_ui(page: ft.Page):
                     api_save_status,
                     ft.Text("信息本地保存，重启后依然有效", size=11, color=ft.Colors.GREY),
                 ], spacing=8),
-                padding=16
-            )),
-            ft.Card(ft.Container(
+                padding=16, bgcolor=ft.Colors.WHITE, border_radius=8
+            ),
+            ft.Container(
                 content=ft.Column([
                     ft.Text("知识库状态", size=16, weight=ft.FontWeight.W_600),
                     ft.Text("PCM规则+案例+全品类知识 已加载", size=14),
                     ft.Text(f"数据库: {get_db_path()}", size=11, color=ft.Colors.GREY),
                 ], spacing=8),
-                padding=16
-            )),
-            ft.Card(ft.Container(
+                padding=16, bgcolor=ft.Colors.WHITE, border_radius=8
+            ),
+            ft.Container(
                 content=ft.Column([
                     ft.Text("关于", size=16, weight=ft.FontWeight.W_600),
                     ft.Text("新材料工艺偏差排查AI v1.0", size=14),
                     ft.Text("兼容 Android / 鸿蒙 (HarmonyOS)", size=11, color=ft.Colors.GREY),
                 ], spacing=8),
-                padding=16
-            )),
+                padding=16, bgcolor=ft.Colors.WHITE, border_radius=8
+            ),
         ], spacing=12)
     
     # ====== 页面组装 ======
