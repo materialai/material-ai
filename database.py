@@ -258,3 +258,37 @@ if not HAS_PG:
             return _sqlite.get_stats().get("vectors", 0)
         except Exception:
             return 0
+
+    # ══ 附录 I~S 知识查询 ══
+    def list_test_process_mappings(keyword=""):
+        return _sqlite.list_test_process_mappings(keyword)
+
+    def search_compatibility(kw):
+        return _sqlite.search_compatibility(kw)
+
+    def list_doe_interactions():
+        return _sqlite.list_doe_interactions()
+
+    def list_cost_performance_plans(scenario=""):
+        return _sqlite.list_cost_performance_plans(scenario)
+
+    def list_thinking_chain_cases():
+        return _sqlite.list_thinking_chain_cases()
+
+    def list_customer_constraints():
+        return _sqlite.list_customer_constraints()
+
+    def list_industry_standards(keyword=""):
+        return _sqlite.list_industry_standards(keyword)
+
+    def list_rule_boundaries():
+        return _sqlite.list_rule_boundaries()
+
+    def list_material_hidden_risks():
+        return _sqlite.list_material_hidden_risks()
+
+    def list_equipment_drift():
+        return _sqlite.list_equipment_drift()
+
+    def list_failure_lessons(keyword=""):
+        return _sqlite.list_failure_lessons(keyword)

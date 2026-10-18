@@ -444,7 +444,7 @@ def build_main_ui(page: ft.Page):
 
     def _run_llm_diagnosis():
         """后台线程：调用豆包 + 决策引擎生成报告"""
-        from decision_engine import build_diagnosis_prompt
+        from decision_engine import build_diagnosis_prompt, build_enhanced_report
         import db_sqlite as _db
         import model_manager as _mm
         
@@ -475,6 +475,9 @@ def build_main_ui(page: ft.Page):
         # 决策引擎输出
         decision = session.finalize()
         
+        # ★ 增强报告：自动追加成本-性能权衡 + DOE交互警告 + 测试映射
+        enhanced_report = build_enhanced_report(profile, llm_report)
+        
         # 归档到数据库
         try:
             _db.save_diagnosis_session(
@@ -482,14 +485,14 @@ def build_main_ui(page: ft.Page):
                 profile.to_dict(),
                 decision.primary_direction,
                 decision.confidence,
-                llm_report,
+                enhanced_report,
             )
         except Exception:
             pass
         
         # 回到主线程显示结果
         def _show():
-            _render_decision_report(llm_report, decision)
+            _render_decision_report(enhanced_report, decision)
         
         page.run_thread(_show)
     
@@ -875,7 +878,7 @@ def build_main_ui(page: ft.Page):
             rule_content.value = ""
             page.update()
 
-        # Tab切换：案例录入 / 规则录入
+        # Tab切换：案例录入 / 规则录入 / 教训+野经验
         tab_case = ft.Column([
             ft.Text("录入新案例，沉淀经验供AI参考", size=14, color=ft.Colors.GREY_700),
             case_input,
@@ -893,9 +896,56 @@ def build_main_ui(page: ft.Page):
             rule_status,
         ], spacing=10)
 
+        # ══ 野经验/教训录入 Tab ══
+        lesson_action = ft.TextField(label='触发操作/动作（如"一次性加稀释剂8phr"）')
+        lesson_consequence = ft.TextField(label="连锁次生后果", multiline=True, min_lines=2, max_lines=3)
+        lesson_redline = ft.TextField(label='禁止红线（如"单次<=5phr，必须分次"）')
+        lesson_status = ft.Text("", size=13, color=ft.Colors.GREEN)
+
+        def save_lesson(e):
+            action = lesson_action.value.strip()
+            consequence = lesson_consequence.value.strip()
+            redline = lesson_redline.value.strip()
+            if not action or not redline:
+                lesson_status.value = "❌ 操作动作和禁止红线不能为空"
+                lesson_status.color = ft.Colors.RED
+                page.update()
+                return
+            import uuid
+            lid = f"FAIL-{uuid.uuid4().hex[:6]}"
+            try:
+                kb_db.execute(
+                    "INSERT INTO failure_lesson (lesson_id, action_desc, redline, consequence, loss_level) VALUES(?,?,?,?,?)",
+                    (lid, action, redline, consequence, "待评估")
+                )
+                kb_db.commit()
+                # 也索引到向量知识库
+                kb_db.index_text("failure_lesson", lid, f"失败教训:{action} 后果:{consequence} 红线:{redline}")
+            except Exception as ex:
+                lesson_status.value = f"❌ 保存失败: {str(ex)[:60]}"
+                lesson_status.color = ft.Colors.RED
+                page.update()
+                return
+            lesson_status.value = "✅ 教训已入库，AI后续方案输出将自动拦截此类操作"
+            lesson_status.color = ft.Colors.GREEN
+            lesson_action.value = ""
+            lesson_consequence.value = ""
+            lesson_redline.value = ""
+            page.update()
+
+        tab_lesson = ft.Column([
+            ft.Text("录入历史失败教训，AI输出方案前自动拦截红线操作", size=14, color=ft.Colors.GREY_700),
+            ft.Text("工程师野经验是最宝贵的知识——让AI不再重蹈覆辙", size=12, color=ft.Colors.GREY_500),
+            lesson_action,
+            lesson_consequence,
+            lesson_redline,
+            ft.Button("🚫 保存教训红线", icon=ft.Icons.SAVE, on_click=save_lesson),
+            lesson_status,
+        ], spacing=10)
+
         # Flet 1.0.x 改用 TabBar + TabBarView; Tab 只接受 label
         page_tabs = ft.Tabs(
-            length=2,
+            length=3,
             selected_index=0,
             expand=True,
             content=ft.Column(
@@ -906,6 +956,7 @@ def build_main_ui(page: ft.Page):
                         tabs=[
                             ft.Tab(label="📋 案例录入"),
                             ft.Tab(label="📐 规则录入"),
+                            ft.Tab(label="🚫 教训红线"),
                         ],
                     ),
                     ft.TabBarView(
@@ -913,6 +964,7 @@ def build_main_ui(page: ft.Page):
                         controls=[
                             ft.Container(content=tab_case, padding=10, expand=True),
                             ft.Container(content=tab_rule, padding=10, expand=True),
+                            ft.Container(content=tab_lesson, padding=10, expand=True),
                         ],
                     ),
                 ],
